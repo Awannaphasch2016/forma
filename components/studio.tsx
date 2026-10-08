@@ -448,7 +448,11 @@ export function Studio() {
               <div className="composer-bottom">
                 <span>
                   <span className="agent-dot" />
-                  {provider === "openrouter" ? "OpenRouter" : "OpenAI Agent"}
+                  {provider === "openrouter"
+                    ? "OpenRouter"
+                    : provider === "openai"
+                      ? "OpenAI Agent"
+                      : "Agent"}
                 </span>
                 <button
                   className="send-button"
@@ -672,9 +676,9 @@ export function Studio() {
               <ArrowUpRight size={17} />
             </button>
             <small>
-              {provider === "openrouter"
-                ? "OpenRouter × Vercel Sandbox"
-                : "OpenAI Agents × Vercel Sandbox"}
+              {provider === "openai"
+                ? "OpenAI Agents × Vercel Sandbox"
+                : "OpenRouter × Vercel Sandbox"}
             </small>
           </form>
         </div>
