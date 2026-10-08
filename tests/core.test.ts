@@ -35,6 +35,24 @@ describe("demo security boundaries", () => {
       ),
     ).not.toThrow();
   });
+  it("allows the deployment host when APP_URL names another origin", () => {
+    vi.stubEnv("APP_URL", "https://forma-preview.vercel.app");
+    expect(() =>
+      sameOrigin(
+        new Request("https://forma-abc.vercel.app/api/auth", {
+          headers: { origin: "https://forma-abc.vercel.app" },
+        }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      sameOrigin(
+        new Request("https://forma-abc.vercel.app/api/auth", {
+          headers: { origin: "https://evil.example" },
+        }),
+      ),
+    ).toThrow();
+    vi.unstubAllEnvs();
+  });
   it("routes only executor connection and failure lifecycle webhooks", () => {
     expect(
       sessionIdToReconcile({
