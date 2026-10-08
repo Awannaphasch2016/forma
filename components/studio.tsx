@@ -29,11 +29,22 @@ import {
 } from "lucide-react";
 import type { Message, Project } from "@/lib/types";
 import Markdown from "react-markdown";
+import { clerkBearer, clerkReady, clerkSignIn, clerkSignOut } from "./clerk-browser";
+
+type SessionView = {
+  signedIn: boolean;
+  organization?: string | null;
+  role?: string | null;
+};
 
 async function api(path: string, body?: unknown, method?: string) {
+  const token = await clerkBearer();
+  const headers = new Headers();
+  if (body) headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
   const response = await fetch(path, {
     method: method || (body ? "POST" : "GET"),
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json();
@@ -73,9 +84,11 @@ const stateLabels: Record<string, string> = {
 };
 
 export function Studio() {
-  const [auth, setAuth] = useState<boolean | null>(null);
+  const [session, setSession] = useState<SessionView | null>(null);
+  const [clerkFailed, setClerkFailed] = useState(false);
+  const [clerkReadyState, setClerkReadyState] = useState(false);
   const [configured, setConfigured] = useState(true);
-  const [password, setPassword] = useState("");
+  const [provider, setProvider] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
   const [history, setHistory] = useState<Message[]>([]);
@@ -91,20 +104,49 @@ export function Studio() {
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const active = busy || !!project?.active_job_id;
+  const open = Boolean(session?.signedIn && session.role);
+  const accountLabel = [session?.organization, session?.role]
+    .filter(Boolean)
+    .join(" · ");
   const refreshProjects = useCallback(async () => {
     const data = await api("/api/projects");
     setProjects(data.projects);
   }, []);
   useEffect(() => {
-    Promise.all([api("/api/auth"), api("/api/status")])
-      .then(([a, s]) => {
-        setAuth(a.authenticated);
-        setConfigured(s.configured);
+    let cancelled = false;
+    const refresh = async () => {
+      const [authResponse, status] = await Promise.all([
+        api("/api/auth"),
+        api("/api/status"),
+      ]);
+      if (cancelled) return;
+      setSession(authResponse as SessionView);
+      setConfigured(status.configured);
+      setProvider(typeof status.provider === "string" ? status.provider : "");
+    };
+    void clerkReady()
+      .then(async (ready) => {
+        if (cancelled) return;
+        if (!ready || !window.Clerk) {
+          setClerkFailed(true);
+          setSession({ signedIn: false });
+          return;
+        }
+        setClerkReadyState(true);
+        window.Clerk.addListener(() => {
+          void refresh().catch(() => setSession({ signedIn: false }));
+        });
+        await refresh();
       })
       .catch(() => {
-        setAuth(false);
-        setError("Could not connect to the app.");
+        if (!cancelled) {
+          setClerkFailed(true);
+          setSession({ signedIn: false });
+        }
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
   const openProject = useCallback(async (id: string) => {
     setError("");
@@ -126,51 +168,74 @@ export function Studio() {
     }
   }, []);
   useEffect(() => {
-    if (!auth) return;
-    const controller = new AbortController();
-    fetch("/api/projects", { signal: controller.signal })
-      .then((r) => r.json())
+    if (!open) return;
+    let cancelled = false;
+    api("/api/projects")
       .then((data) => {
-        if (controller.signal.aborted) return;
-        if (data.error) throw new Error(data.error);
+        if (cancelled) return;
         setProjects(data.projects);
         const id = new URLSearchParams(window.location.search).get("project");
         if (id) void openProject(id);
       })
       .catch((e) => {
-        if (!controller.signal.aborted) setError(e.message);
+        if (!cancelled) setError(e.message);
       });
-    return () => controller.abort();
-  }, [auth, refreshProjects, openProject]);
-  useEffect(() => {
-    if (!project?.id || !auth) return;
-    const stream = new EventSource(`/api/projects/${project.id}/events`);
-    stream.onopen = () => setConnected(true);
-    stream.onerror = () => setConnected(false);
-    stream.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setProject(data.project);
-      setHistory(data.messages);
+    return () => {
+      cancelled = true;
     };
-    return () => stream.close();
-  }, [project?.id, auth]);
+  }, [open, refreshProjects, openProject]);
+  useEffect(() => {
+    if (!project?.id || !open) return;
+    const controller = new AbortController();
+    let stopped = false;
+    const read = async () => {
+      while (!stopped && !controller.signal.aborted) {
+        try {
+          const token = await clerkBearer();
+          const response = await fetch(`/api/projects/${project.id}/events`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) {
+            setConnected(false);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          setConnected(true);
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          while (!stopped) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const chunks = buffer.split("\n\n");
+            buffer = chunks.pop() ?? "";
+            for (const chunk of chunks) {
+              const line = chunk
+                .split("\n")
+                .find((item) => item.startsWith("data: "));
+              if (!line) continue;
+              const data = JSON.parse(line.slice("data: ".length));
+              setProject(data.project);
+              setHistory(data.messages);
+            }
+          }
+        } catch {
+          if (!controller.signal.aborted) setConnected(false);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+      }
+    };
+    void read();
+    return () => {
+      stopped = true;
+      controller.abort();
+    };
+  }, [project?.id, open]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history.length]);
-  async function login(event: FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api("/api/auth", { password });
-      setPassword("");
-      setAuth(true);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function submit(event?: FormEvent) {
     event?.preventDefault();
     if (!prompt.trim() || active || !configured) return;
@@ -238,7 +303,9 @@ export function Studio() {
           </span>
         </button>
         <span className="header-divider" />
-        <span className="workspace-label">Personal workspace</span>
+        <span className="workspace-label">
+          {accountLabel || "Personal workspace"}
+        </span>
         <span className="demo-badge">LAB</span>
         <div className="header-actions">
           <span className="saved-note">
@@ -250,16 +317,12 @@ export function Studio() {
           <button
             className="icon-button account"
             aria-label="Sign out"
-            onClick={async () => {
-              if (auth) {
-                await api("/api/auth", undefined, "DELETE");
-                setAuth(false);
-                setProject(null);
-              }
+            onClick={() => {
+              if (open) void clerkSignOut();
             }}
-            title={auth ? "Sign out" : "Private workspace"}
+            title={open ? "Sign out" : "Private workspace"}
           >
-            {auth ? <LogOut size={15} /> : <LockKeyhole size={15} />}
+            {open ? <LogOut size={15} /> : <LockKeyhole size={15} />}
           </button>
         </div>
       </header>
@@ -284,7 +347,7 @@ export function Studio() {
               className="project-picker"
               onClick={() => {
                 setSavedOpen(!savedOpen);
-                if (auth) refreshProjects().catch((e) => setError(e.message));
+                if (open) refreshProjects().catch((e) => setError(e.message));
               }}
             >
               <span>{project?.name || "New project"}</span>
@@ -416,8 +479,8 @@ export function Studio() {
             )}
             {!configured && (
               <div className="config-banner">
-                Setup is in progress. Add the credentials in{" "}
-                <code>.env.local</code> to start building.
+                Setup is in progress. An OpenRouter key or the OpenAI Agents
+                credentials are still missing.
               </div>
             )}
             <form className="composer" onSubmit={submit}>
@@ -446,11 +509,15 @@ export function Studio() {
               <div className="composer-bottom">
                 <span>
                   <span className="agent-dot" />
-                  OpenAI Agent
+                  {provider === "openrouter"
+                    ? "OpenRouter"
+                    : provider === "openai"
+                      ? "OpenAI Agent"
+                      : "Agent"}
                 </span>
                 <button
                   className="send-button"
-                  disabled={!prompt.trim() || active || !auth || !configured}
+                  disabled={!prompt.trim() || active || !open || !configured}
                   aria-label="Send prompt"
                 >
                   {busy ? (
@@ -639,9 +706,9 @@ export function Studio() {
           </footer>
         </section>
       </main>
-      {auth === false && (
+      {session && !open && (
         <div className="login-overlay">
-          <form className="login-card" onSubmit={login}>
+          <div className="login-card">
             <span className="brand-symbol">f</span>
             <span className="eyebrow">YOUR PRIVATE WORKSPACE</span>
             <h2>
@@ -649,31 +716,40 @@ export function Studio() {
               <br />
               something new.
             </h2>
-            <p>Enter your workspace password to get started.</p>
-            <label htmlFor="password">Workspace password</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoFocus
-              required
-            />
+            <p>
+              {session.signedIn
+                ? "This account is not a member of Wewebplus."
+                : "Sign in with your Wewebplus account to get started."}
+            </p>
             {error && (
               <p role="alert" className="login-error">
                 {error}
               </p>
             )}
-            <button className="primary-button" disabled={busy}>
-              {busy ? "Opening…" : "Open workspace"}
-              <ArrowUpRight size={17} />
-            </button>
-            <small>OpenAI Agents × Vercel Sandbox</small>
-          </form>
+            {session.signedIn ? (
+              <button className="primary-button" onClick={() => void clerkSignOut()}>
+                Sign out
+              </button>
+            ) : (
+              <button
+                className="primary-button"
+                data-testid="forma-sign-in"
+                disabled={!clerkReadyState || clerkFailed}
+                onClick={() => void clerkSignIn()}
+              >
+                {clerkFailed ? "Sign in did not load" : "Sign in"}
+                <ArrowUpRight size={17} />
+              </button>
+            )}
+            <small>
+              {provider === "openai"
+                ? "OpenAI Agents × Vercel Sandbox"
+                : "OpenRouter × Vercel Sandbox"}
+            </small>
+          </div>
         </div>
       )}
-      {auth === null && (
+      {session === null && (
         <div className="loading-overlay">
           <Loader2 className="spin" size={23} />
           <span>Opening your workspace…</span>
