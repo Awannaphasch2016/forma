@@ -3,7 +3,11 @@ import { required, SANDBOX_TIMEOUT, WORKSPACE } from "./config";
 import { starter } from "./starter";
 import type { Project } from "./types";
 
-export async function prepareSandbox(project: Project) {
+export async function prepareSandbox(
+  project: Project,
+  options?: { executor?: boolean },
+) {
+  const executor = options?.executor !== false;
   // Reopening a saved workspace must fail visibly if storage is gone, never reset it.
   const sandbox = project.session_id
     ? await Sandbox.get({ name: project.sandbox_name })
@@ -16,11 +20,13 @@ export async function prepareSandbox(project: Project) {
         snapshotExpiration: 0,
         keepLastSnapshots: { count: 2, expiration: 0, deleteEvicted: true },
         networkPolicy: {
-          allow: [
-            "api.openai.com",
-            "codex-cloud-environments.chatgpt.com",
-            "registry.npmjs.org",
-          ],
+          allow: executor
+            ? [
+                "api.openai.com",
+                "codex-cloud-environments.chatgpt.com",
+                "registry.npmjs.org",
+              ]
+            : ["registry.npmjs.org"],
         },
       });
   const setup = await sandbox.runCommand({
@@ -31,12 +37,18 @@ export async function prepareSandbox(project: Project) {
       "/tmp/studio-setup.lock",
       "sh",
       "-c",
-      "mkdir -p /workspace && chown ubuntu:ubuntu /workspace && (command -v codex || npm install -g @openai/codex@alpha)",
+      executor
+        ? "mkdir -p /workspace && chown ubuntu:ubuntu /workspace && (command -v codex || npm install -g @openai/codex@alpha)"
+        : "mkdir -p /workspace && chown ubuntu:ubuntu /workspace",
     ],
     sudo: true,
   });
   if (setup.exitCode !== 0)
-    throw new Error("Could not install the sandbox executor.");
+    throw new Error(
+      executor
+        ? "Could not install the sandbox executor."
+        : "Could not prepare the sandbox workspace.",
+    );
   const exists = await sandbox.runCommand({
     cmd: "test",
     args: ["-f", `${WORKSPACE}/.studio-initialized`],

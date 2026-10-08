@@ -35,7 +35,20 @@ export async function jsonBody(request: Request) {
   }
 }
 export function sameOrigin(request: Request) {
-  const expected = process.env.APP_URL || new URL(request.url).origin;
-  if (request.headers.get("origin") !== expected)
+  const origin = request.headers.get("origin");
+  if (!origin) throw new HttpError(403, "Request origin is not allowed.");
+  let originHost = "";
+  try {
+    originHost = new URL(origin).host;
+  } catch {
     throw new HttpError(403, "Request origin is not allowed.");
+  }
+  const requestHost = new URL(request.url).host;
+  const headerHost = request.headers.get("host")?.split(",")[0]?.trim();
+  if (originHost === requestHost || (headerHost && originHost === headerHost)) {
+    return;
+  }
+  const appUrl = process.env.APP_URL;
+  if (appUrl && origin === new URL(appUrl).origin) return;
+  throw new HttpError(403, "Request origin is not allowed.");
 }

@@ -75,6 +75,7 @@ const stateLabels: Record<string, string> = {
 export function Studio() {
   const [auth, setAuth] = useState<boolean | null>(null);
   const [configured, setConfigured] = useState(true);
+  const [provider, setProvider] = useState("");
   const [password, setPassword] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<Project | null>(null);
@@ -100,6 +101,7 @@ export function Studio() {
       .then(([a, s]) => {
         setAuth(a.authenticated);
         setConfigured(s.configured);
+        setProvider(typeof s.provider === "string" ? s.provider : "");
       })
       .catch(() => {
         setAuth(false);
@@ -416,8 +418,8 @@ export function Studio() {
             )}
             {!configured && (
               <div className="config-banner">
-                Setup is in progress. Add the credentials in{" "}
-                <code>.env.local</code> to start building.
+                Setup is in progress. An OpenRouter key or the OpenAI Agents
+                credentials are still missing.
               </div>
             )}
             <form className="composer" onSubmit={submit}>
@@ -446,7 +448,11 @@ export function Studio() {
               <div className="composer-bottom">
                 <span>
                   <span className="agent-dot" />
-                  OpenAI Agent
+                  {provider === "openrouter"
+                    ? "OpenRouter"
+                    : provider === "openai"
+                      ? "OpenAI Agent"
+                      : "Agent"}
                 </span>
                 <button
                   className="send-button"
@@ -669,7 +675,11 @@ export function Studio() {
               {busy ? "Opening…" : "Open workspace"}
               <ArrowUpRight size={17} />
             </button>
-            <small>OpenAI Agents × Vercel Sandbox</small>
+            <small>
+              {provider === "openai"
+                ? "OpenAI Agents × Vercel Sandbox"
+                : "OpenRouter × Vercel Sandbox"}
+            </small>
           </form>
         </div>
       )}

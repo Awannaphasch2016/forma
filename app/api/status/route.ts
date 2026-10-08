@@ -1,4 +1,7 @@
-import { missingConfig } from "@/lib/config";
+import { missingConfig, providerMode } from "@/lib/config";
 export async function GET() {
-  return Response.json({ configured: missingConfig().length === 0 });
+  return Response.json({
+    configured: missingConfig().length === 0,
+    provider: providerMode(),
+  });
 }
