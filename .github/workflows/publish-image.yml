@@ -1,5 +1,5 @@
-# Build the Forma image for this commit. The preview URL stays on Vercel.
-# This file is copied into Awannaphasch2016/forma. It must not receive secrets.
+# Build the Forma image for this commit.
+# Log in as the repository owner so the package is created on that account.
 name: Publish Forma image
 
 on:
@@ -34,7 +34,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
@@ -55,3 +55,38 @@ jobs:
         run: |
           set -euo pipefail
           echo "forma_image=ghcr.io/awannaphasch2016/forma@${{ steps.build.outputs.digest }}"
+
+      - name: Record the package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          node --input-type=module <<'NODE'
+          const headers = {
+            Authorization: `Bearer ${process.env.GH_TOKEN}`,
+            Accept: "application/vnd.github+json",
+            "User-Agent": "forma-publish",
+            "X-GitHub-Api-Version": "2022-11-28",
+          };
+          const urls = [
+            "https://api.github.com/user/packages/container/forma",
+            "https://api.github.com/users/Awannaphasch2016/packages/container/forma",
+          ];
+          for (const url of urls) {
+            const response = await fetch(url, { headers });
+            const label = url.includes("/users/") ? "users" : "user";
+            process.stdout.write(`forma_package_get_${label}=${response.status}\n`);
+            if (response.status !== 200) continue;
+            const body = await response.json();
+            process.stdout.write(`forma_package_visibility=${body.visibility}\n`);
+            process.stdout.write(`forma_package_url=${body.html_url}\n`);
+            if (body.visibility === "public") continue;
+            const patched = await fetch(url, {
+              method: "PATCH",
+              headers: { ...headers, "Content-Type": "application/json" },
+              body: JSON.stringify({ visibility: "public" }),
+            });
+            process.stdout.write(`forma_package_patch_${label}=${patched.status}\n`);
+          }
+          NODE
