@@ -2,12 +2,7 @@ export const WORKSPACE = "/workspace";
 export const SANDBOX_TIMEOUT = 30 * 60_000;
 export const IDLE_MINUTES = 10;
 
-const APP_KEYS = [
-  "DATABASE_URL",
-  "APP_PASSWORD",
-  "AUTH_SECRET",
-  "CRON_SECRET",
-] as const;
+const APP_KEYS = ["DATABASE_URL", "AUTH_SECRET", "CRON_SECRET"] as const;
 
 export const OPENAI_CONFIG_KEYS = [
   "OPENAI_API_KEY",

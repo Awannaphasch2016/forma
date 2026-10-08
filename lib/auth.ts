@@ -1,65 +1,62 @@
-import { createHmac, createHash, timingSafeEqual } from "node:crypto";
-import { cookies } from "next/headers";
-import { required } from "./config";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { cookies, headers } from "next/headers";
 import { HttpError } from "./http";
+import {
+  formaAccount,
+  formaOwnerId,
+  type FormaSession,
+} from "./sign-in";
 
-const COOKIE = "studio_session";
-export const cookieOptions = {
-  httpOnly: true,
-  sameSite: "strict" as const,
-  secure: process.env.NODE_ENV === "production",
-  path: "/",
-  maxAge: 7 * 86400,
-};
 export function equal(a: string, b: string) {
   return timingSafeEqual(
     createHash("sha256").update(a).digest(),
     createHash("sha256").update(b).digest(),
   );
 }
-export function signSession(
-  owner: string,
-  expires = Date.now() + 7 * 86400_000,
-) {
-  const payload = Buffer.from(JSON.stringify({ owner, expires })).toString(
-    "base64url",
-  );
-  return `${payload}.${createHmac("sha256", required("AUTH_SECRET")).update(payload).digest("base64url")}`;
+
+async function neonMemberships(databaseUrl: string, sql: string, params: unknown[]) {
+  const endpoint = new URL(databaseUrl);
+  endpoint.hostname = endpoint.hostname.replace("-pooler.", ".");
+  const response = await fetch(`https://${endpoint.host}/sql`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Neon-Connection-String": endpoint.toString(),
+    },
+    body: JSON.stringify({ query: sql, params }),
+  });
+  if (!response.ok) throw new Error("Sign in to continue.");
+  const payload = (await response.json()) as {
+    rows?: unknown[];
+    fields?: { name: string }[];
+  };
+  const fields = payload.fields ?? [];
+  return (payload.rows ?? []).map((row) => {
+    if (!Array.isArray(row)) return (row ?? {}) as Record<string, unknown>;
+    const record: Record<string, unknown> = {};
+    fields.forEach((field, index) => {
+      record[field.name] = row[index];
+    });
+    return record;
+  });
 }
-export function verifySession(token: string) {
-  try {
-    const [payload, signature, extra] = token.split(".");
-    if (
-      extra ||
-      !signature ||
-      !equal(
-        signature,
-        createHmac("sha256", required("AUTH_SECRET"))
-          .update(payload)
-          .digest("base64url"),
-      )
-    )
-      return null;
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString());
-    return typeof data.owner === "string" && data.expires > Date.now()
-      ? (data.owner as string)
-      : null;
-  } catch {
-    return null;
-  }
+
+export async function currentSession(): Promise<FormaSession> {
+  const headerStore = await headers();
+  const cookieStore = await cookies();
+  const databaseUrl = process.env.WEWEBPLUS_DATABASE_URL ?? "";
+  return formaAccount({
+    authorization: headerStore.get("authorization"),
+    cookie: cookieStore.toString(),
+    env: process.env,
+    query: databaseUrl
+      ? (sql, params) => neonMemberships(databaseUrl, sql, params)
+      : undefined,
+  });
 }
+
 export async function ownerId() {
-  const owner = verifySession((await cookies()).get(COOKIE)?.value || "");
+  const owner = formaOwnerId(await currentSession());
   if (!owner) throw new HttpError(401, "Sign in to your workspace.");
   return owner;
-}
-export async function setSession() {
-  // One durable workspace identity for this intentionally single-user demo.
-  const owner = createHmac("sha256", required("AUTH_SECRET"))
-    .update("demo-owner")
-    .digest("hex");
-  (await cookies()).set(COOKIE, signSession(owner), cookieOptions);
-}
-export async function clearSession() {
-  (await cookies()).delete(COOKIE);
 }

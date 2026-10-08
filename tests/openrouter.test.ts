@@ -17,7 +17,6 @@ vi.mock("@vercel/sandbox", () => ({
 
 const NAMES = [
   "DATABASE_URL",
-  "APP_PASSWORD",
   "AUTH_SECRET",
   "CRON_SECRET",
   "OPENAI_API_KEY",
@@ -41,7 +40,6 @@ function withEnv(values: Record<string, string> = {}) {
 it("treats an OpenRouter key as configured without OpenAI credentials", () => {
   withEnv({
     DATABASE_URL: "postgres://local/db",
-    APP_PASSWORD: "pw",
     AUTH_SECRET: "auth",
     CRON_SECRET: "cron",
     OPENROUTER_API_KEY: "sk-or-example",
@@ -56,7 +54,6 @@ it("treats an OpenRouter key as configured without OpenAI credentials", () => {
 it("keeps the Agents credentials when OpenRouter is absent", () => {
   withEnv({
     DATABASE_URL: "postgres://local/db",
-    APP_PASSWORD: "pw",
     AUTH_SECRET: "auth",
     CRON_SECRET: "cron",
     OPENAI_API_KEY: "sk-example",
@@ -73,7 +70,6 @@ it("still reports the Agents names when neither provider is set", () => {
   expect(providerMode()).toBe("unconfigured");
   expect(missingConfig()).toEqual([
     "DATABASE_URL",
-    "APP_PASSWORD",
     "AUTH_SECRET",
     "CRON_SECRET",
     "OPENAI_API_KEY",
