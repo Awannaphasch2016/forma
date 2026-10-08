@@ -1,0 +1,6 @@
+# Dev stage only. Do not run this on the production host.
+services:
+  forma:
+    build: .
+    ports:
+      - "3000:3000"
