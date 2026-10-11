@@ -1,12 +1,11 @@
-# Build the Forma image for this commit. The preview URL stays on Vercel.
-# This file is copied into Awannaphasch2016/forma. It must not receive secrets.
+# Build the Forma image for the role-pause commit.
+# Log in as the repository owner so the package stays on that account.
 name: Publish Forma image
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - cursor/forma-preview-walkthrough
+      - cursor/forma-hitl-image-5014
 
 permissions:
   contents: read
@@ -34,7 +33,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
