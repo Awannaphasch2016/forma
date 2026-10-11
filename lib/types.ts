@@ -12,6 +12,8 @@ export type Project = {
   last_seen_at: string;
   created_at: string;
   updated_at: string;
+  organization_id?: string | null;
+  ask?: { id: string; body: string; uncertain: boolean } | null;
 };
 export type Job = {
   id: string;

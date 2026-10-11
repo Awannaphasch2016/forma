@@ -265,6 +265,26 @@ h1 em {
   padding: 17px 20px 14px;
   flex-shrink: 0;
 }
+.hitl-card {
+  border: 1px solid #d8d7ce;
+  border-radius: 11px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #fffefd;
+}
+.hitl-card h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.hitl-card textarea {
+  width: 100%;
+  min-height: 72px;
+  margin-top: 6px;
+}
+.hitl-card button {
+  margin-top: 8px;
+}
 .composer {
   border: 1px solid #d8d7ce;
   border-radius: 11px;

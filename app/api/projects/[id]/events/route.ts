@@ -1,4 +1,5 @@
-import { ownerId } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
+import { visibleAsk } from "@/lib/hitl";
 import { getProject, messages } from "@/lib/projects";
 import { errorResponse } from "@/lib/http";
 import { query } from "@/lib/db";
@@ -9,8 +10,8 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    const owner = await ownerId();
-    await getProject(id, owner);
+    const member = await requireMember();
+    await getProject(id, member.organizationId);
     const encoder = new TextEncoder();
     let cancelled = false;
     const stream = new ReadableStream({
@@ -22,11 +23,15 @@ export async function GET(
           ]);
           let previous = "";
           while (!cancelled && !request.signal.aborted && Date.now() < end) {
-            const [project, history] = await Promise.all([
-              getProject(id, owner),
+            const [project, history, ask] = await Promise.all([
+              getProject(id, member.organizationId),
               messages(id),
+              visibleAsk(id, member.roleId),
             ]);
-            const payload = JSON.stringify({ project, messages: history });
+            const payload = JSON.stringify({
+              project: { ...project, ask },
+              messages: history,
+            });
             if (payload !== previous) {
               controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
               previous = payload;

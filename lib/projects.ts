@@ -25,7 +25,7 @@ export async function createProject(owner: string, prompt: string, id: string) {
     );
     if (existing[0]) return existing[0];
     const [project] = await q<Project>(
-      "INSERT INTO projects(id,owner_id,name,sandbox_name) VALUES($1,$2,$3,$4) RETURNING *",
+      "INSERT INTO projects(id,owner_id,organization_id,name,sandbox_name) VALUES($1,$2,$2,$3,$4) RETURNING *",
       [id, owner, prompt.slice(0, 65), `studio-${id}`],
     );
     return project;
@@ -54,6 +54,11 @@ export async function enqueueJob(
         409,
         "An edit or preview operation is already running.",
       );
+    if (
+      project.status === "waiting_for_human" &&
+      (kind === "edit" || kind === "resume")
+    )
+      throw new HttpError(409, "An answer is required before the next edit.");
     const [job] = await q<Job>(
       "INSERT INTO jobs(id,project_id,kind,prompt) VALUES($1,$2,$3,$4) RETURNING *",
       [id, projectId, kind, prompt],
