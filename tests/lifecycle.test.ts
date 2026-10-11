@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
   turns: [] as import("../lib/openai").Turn[],
   mode: "normal",
   loseAcknowledgement: false,
+  reply: "Updated the app.",
 }));
 vi.mock("../lib/db", () => ({
   query: async (sql: string, values: unknown[] = []) =>
@@ -76,7 +77,7 @@ vi.mock("../lib/openai", async (importOriginal) => {
           role: "assistant",
           id: `msg_${turn.id}`,
           turn_id: turn.id,
-          content: [{ type: "output_text", text: "Updated the app." }],
+          content: [{ type: "output_text", text: state.reply }],
           status: ["completed", "failed", "cancelled"].includes(turn.status)
             ? "completed"
             : "in_progress",
@@ -164,7 +165,7 @@ vi.mock("../lib/openai", async (importOriginal) => {
           item_id: `msg_${turn.id}`,
           output_index: 0,
           content_index: 0,
-          text: "Updated the app.",
+          text: state.reply,
         };
         turn.status =
           state.mode === "failed"
@@ -182,6 +183,7 @@ vi.mock("../lib/openai", async (importOriginal) => {
     })),
   };
 });
+import { answerHitl, visibleAsk } from "../lib/hitl";
 import {
   createProject,
   enqueueJob,
@@ -203,8 +205,9 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await state.db.exec(
-    "TRUNCATE messages,jobs,projects RESTART IDENTITY CASCADE",
+    "TRUNCATE hitl_answers,hitl_questions,messages,jobs,projects RESTART IDENTITY CASCADE",
   );
+  state.reply = "Updated the app.";
   state.sessionCount = 0;
   state.turn = 0;
   state.file = "";
@@ -389,6 +392,144 @@ it("keeps ambiguous recovered turns locked without submitting more input", async
   expect(checkBuild).not.toHaveBeenCalled();
   expect((await getProject(p.id)).active_job_id).toBe(job.id);
 });
+const ORG = "org_wewebplus";
+
+async function openQuestions() {
+  const result = await state.db.query<{ n: number }>(
+    "SELECT count(*)::int AS n FROM hitl_questions",
+  );
+  return Number(result.rows[0]?.n ?? 0);
+}
+
+it("routes a project-manager question to that role and resumes the same session", async () => {
+  state.reply =
+    "## Request for project-manager\n\nWhich name should the page use?";
+  const project = await createProject(ORG, "A page", randomUUID());
+  const edit = await enqueueJob(project.id, ORG, "edit", "Build a page");
+  await runJob(edit.id);
+  const waiting = await getProject(project.id, ORG);
+  expect(waiting.status).toBe("waiting_for_human");
+  expect(waiting.active_job_id).toBeNull();
+  expect(waiting.session_id).toBeTruthy();
+  expect(checkBuild).not.toHaveBeenCalled();
+  const hidden = (await messages(project.id))
+    .map((message) => message.content)
+    .join("\n");
+  expect(hidden).not.toContain("Which name should the page use?");
+  expect(await visibleAsk(project.id, "developer")).toBeNull();
+  expect(await visibleAsk(project.id, "project-manager")).toMatchObject({
+    body: "Which name should the page use?",
+    uncertain: false,
+  });
+  await expect(
+    enqueueJob(project.id, ORG, "edit", "sneak"),
+  ).rejects.toMatchObject({ status: 409 });
+  await expect(
+    answerHitl({
+      projectId: project.id,
+      organizationId: ORG,
+      roleId: "developer",
+      userId: "user_dev",
+      requestId: randomUUID(),
+      answer: "North Pier",
+    }),
+  ).rejects.toMatchObject({ status: 403 });
+  const requestId = randomUUID();
+  const follow = await answerHitl({
+    projectId: project.id,
+    organizationId: ORG,
+    roleId: "project-manager",
+    userId: "user_pm",
+    requestId,
+    answer: "North Pier",
+  });
+  expect(
+    (
+      await answerHitl({
+        projectId: project.id,
+        organizationId: ORG,
+        roleId: "project-manager",
+        userId: "user_pm",
+        requestId,
+        answer: "North Pier",
+      })
+    ).id,
+  ).toBe(follow.id);
+  expect((await getProject(project.id)).session_id).toBe(waiting.session_id);
+  expect(follow.prompt).toContain("Which name should the page use?");
+  expect(follow.prompt).toContain("North Pier");
+  expect(
+    (await messages(project.id)).map((message) => message.content).join("\n"),
+  ).not.toContain("Which name should the page use?");
+  state.reply = "The page is ready.";
+  await runJob(follow.id);
+  expect((await getProject(project.id)).status).toBe("ready");
+  expect(state.sessionCount).toBe(1);
+  expect(state.file).toContain("North Pier");
+  await expect(getProject(project.id, "org_other")).rejects.toMatchObject({
+    status: 404,
+  });
+});
+
+it("routes a developer question to that role and hides it from the project manager", async () => {
+  state.reply =
+    "## Request for developer\n\nWhich database should the menu use?";
+  const project = await createProject(ORG, "A page", randomUUID());
+  const edit = await enqueueJob(project.id, ORG, "edit", "Build a page");
+  await runJob(edit.id);
+  expect((await getProject(project.id)).status).toBe("waiting_for_human");
+  expect(await visibleAsk(project.id, "project-manager")).toBeNull();
+  const ask = await visibleAsk(project.id, "developer");
+  expect(ask).toMatchObject({
+    body: "Which database should the menu use?",
+    uncertain: false,
+  });
+  expect(
+    (await messages(project.id)).map((message) => message.content).join("\n"),
+  ).not.toContain("Which database should the menu use?");
+  const session = (await getProject(project.id)).session_id;
+  const follow = await answerHitl({
+    projectId: project.id,
+    organizationId: ORG,
+    roleId: "developer",
+    userId: "user_dev",
+    requestId: randomUUID(),
+    answer: "Postgres",
+  });
+  expect((await getProject(project.id)).session_id).toBe(session);
+  expect(follow.prompt).toContain("Postgres");
+  state.reply = "The page is ready.";
+  await runJob(follow.id);
+  expect((await getProject(project.id)).status).toBe("ready");
+  expect(state.sessionCount).toBe(1);
+});
+
+it("completes a turn that has no request and stores no question", async () => {
+  state.reply = "The page is ready.";
+  const project = await createProject(ORG, "A page", randomUUID());
+  const edit = await enqueueJob(project.id, ORG, "edit", "Build a page");
+  await runJob(edit.id);
+  const done = await getProject(project.id, ORG);
+  expect(done.status).toBe("ready");
+  expect(done.session_id).toBeTruthy();
+  expect(await openQuestions()).toBe(0);
+  expect(await visibleAsk(project.id, "project-manager")).toBeNull();
+  expect(await visibleAsk(project.id, "developer")).toBeNull();
+});
+
+it("shows an unknown role only to the project manager as uncertain", async () => {
+  state.reply = "## Request for reviewer\n\nWho owns the copy?";
+  const project = await createProject(ORG, "A page", randomUUID());
+  const edit = await enqueueJob(project.id, ORG, "edit", "Build a page");
+  await runJob(edit.id);
+  expect(await visibleAsk(project.id, "developer")).toBeNull();
+  expect(await visibleAsk(project.id, "project-manager")).toMatchObject({
+    body: "Who owns the copy?",
+    uncertain: true,
+  });
+  expect((await getProject(project.id)).status).toBe("waiting_for_human");
+});
+
 it("adds new columns to an old database without changing its saved project or job", async () => {
   const db = new PGlite();
   try {

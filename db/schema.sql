@@ -29,3 +29,29 @@ ALTER TABLE projects ADD COLUMN IF NOT EXISTS environment_remote_url text;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS submission_started_at timestamptz;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS baseline_turn_id text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS final boolean NOT NULL DEFAULT false;
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS organization_id text;
+CREATE INDEX IF NOT EXISTS projects_organization ON projects(organization_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS hitl_questions (
+  id uuid PRIMARY KEY,
+  organization_id text NOT NULL,
+  project_id uuid NOT NULL REFERENCES projects(id),
+  job_id uuid NOT NULL,
+  target_role text,
+  uncertain boolean NOT NULL DEFAULT false,
+  body text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_question ON hitl_questions(project_id) WHERE status = 'open';
+
+CREATE TABLE IF NOT EXISTS hitl_answers (
+  id uuid PRIMARY KEY,
+  question_id uuid NOT NULL UNIQUE REFERENCES hitl_questions(id),
+  user_id text NOT NULL,
+  body text NOT NULL,
+  request_id uuid NOT NULL UNIQUE,
+  follow_up_job_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

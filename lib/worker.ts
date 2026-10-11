@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { providerMode } from "./config";
 import { query } from "./db";
+import { executeOpenRouterJob } from "./openrouter-job";
 import {
   addMessage,
   getProject,
@@ -12,6 +14,7 @@ import {
   removeLegacyAssistantFragments,
 } from "./projects";
 import * as agents from "./openai";
+import { holdForRequest } from "./hitl";
 import {
   prepareSandbox,
   connectExecutor,
@@ -40,6 +43,10 @@ export async function runJob(id: string) {
       ]);
       await progress("Workspace paused. Your files are saved.", "stopped");
       await finishJob(job, "stopped");
+      return;
+    }
+    if (providerMode() === "openrouter") {
+      await executeOpenRouterJob(job, progress);
       return;
     }
     await progress(
@@ -104,6 +111,7 @@ export async function runJob(id: string) {
       await finishJob(job, "error", "Agent turn failed or was cancelled");
       return;
     }
+    if (await holdForRequest(job)) return;
     await query("UPDATE jobs SET phase='checking' WHERE id=$1", [id]);
     await progress(
       "Checking the build and refreshing your preview…",
@@ -135,7 +143,9 @@ export async function runJob(id: string) {
       agents.errorMessage(error).slice(0, 500),
     ]);
     await progress(
-      "Waiting for the workspace connection. The job will retry automatically.",
+      providerMode() === "openrouter"
+        ? "The workspace could not be prepared. The job will retry."
+        : "Waiting for the workspace connection. The job will retry automatically.",
       "retry",
     );
     throw error;

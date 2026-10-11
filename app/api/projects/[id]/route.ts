@@ -1,4 +1,5 @@
-import { ownerId } from "@/lib/auth";
+import { requireMember } from "@/lib/auth";
+import { visibleAsk } from "@/lib/hitl";
 import { getProject, messages } from "@/lib/projects";
 import { errorResponse } from "@/lib/http";
 import { query } from "@/lib/db";
@@ -8,9 +9,13 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
-    const project = await getProject(id, await ownerId());
+    const member = await requireMember();
+    const project = await getProject(id, member.organizationId);
     await query("UPDATE projects SET last_seen_at=now() WHERE id=$1", [id]);
-    return Response.json({ project, messages: await messages(id) });
+    return Response.json({
+      project: { ...project, ask: await visibleAsk(id, member.roleId) },
+      messages: await messages(id),
+    });
   } catch (error) {
     return errorResponse(error);
   }
